@@ -5,6 +5,11 @@
         <format>zip</format>
     </formats>
     <includeBaseDirectory>false</includeBaseDirectory>
+    <moduleSets>
+      <moduleSet>
+        <binaries />
+      </moduleSet>
+    </moduleSets>
     <dependencySets>
         <dependencySet>
             <outputDirectory>/</outputDirectory>
@@ -15,12 +20,19 @@
             </excludes>
         </dependencySet>
         <dependencySet>
-            <outputDirectory>/</outputDirectory>
-            <useProjectArtifact>true</useProjectArtifact>
-            <useTransitiveFiltering>true</useTransitiveFiltering>
-            <includes>
-                <include>com.rethinkdb:rethink-java-driver</include>
-            </includes>
+          <outputDirectory>/</outputDirectory>
+          <useProjectArtifact>true</useProjectArtifact>
+          <unpack>true</unpack>
+          <scope>runtime</scope>
         </dependencySet>
+        <!-- Since this dependency is already vendored, leaving commented out -->
+        <!--<dependencySet>-->
+            <!--<outputDirectory>/</outputDirectory>-->
+            <!--<useProjectArtifact>true</useProjectArtifact>-->
+            <!--<useTransitiveFiltering>true</useTransitiveFiltering>-->
+            <!--<includes>-->
+                <!--<include>com.rethinkdb:rethink-java-driver</include>-->
+            <!--</includes>-->
+        <!--</dependencySet>-->
     </dependencySets>
 </assembly>
