@@ -24,7 +24,6 @@ import com.rethinkdb.RethinkDB;
 import com.rethinkdb.RethinkDBConnection;
 import com.rethinkdb.RethinkDBException;
 import com.rethinkdb.ast.query.RqlQuery;
-import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
@@ -32,7 +31,6 @@ import org.elasticsearch.river.AbstractRiverComponent;
 import org.elasticsearch.river.River;
 import org.elasticsearch.river.RiverName;
 import org.elasticsearch.river.RiverSettings;
-import org.elasticsearch.common.xcontent.XContentFactory.*;
 
 import java.util.*;
 
@@ -47,7 +45,7 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
     public final String hostname;
     public final int port;
     public final String authKey;
-    private final ChangeInfos changeinfos;
+    private final ChangeRecords changeRecords;
 
     private volatile List<Thread> threads;
     private volatile boolean closed;
@@ -62,24 +60,49 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
         this.client = client;
 
         // Get ye settings from the document:
-        Map<String, Object> rdbSettings = jsonGet(
-                settings.settings(), "rethinkdb", new HashMap<>());
-        hostname = jsonGet(rdbSettings, "host", "localhost");
-        port = jsonGet(rdbSettings, "port", 28015);
-        authKey = jsonGet(rdbSettings, "auth_key", "");
-        Map<String,? extends List<String>> tables = jsonGet(rdbSettings, "databases", new HashMap());
+        // Expected settings document (angle brackets indicate it stands in for a real name)
+        // "rethinkdb": {
+        //   "host": <hostname (default: "localhost")>,
+        //   "port": <port (default: 28015)>,
+        //   "auth_key": <authKey (default: "")>,
+        //   "databases": {
+        //     <dbName>: {
+        //       <tableName>: {
+        //         "backfill": <whether to backfill (default: true)>,
+        //         "index": <indexName (default: <dbName>)>,
+        //         "type": <typeName (default: <tableName>)>
+        //       },
+        //       ... more tables in <dbName>
+        //     }
+        //     ... more databases
+        //   }
+        // }
+        try {
+            Map<String, Object> rdbSettings = jsonGet(
+                    settings.settings(), "rethinkdb", new HashMap<>());
+            hostname = jsonGet(rdbSettings, "host", "localhost");
+            port = jsonGet(rdbSettings, "port", 28015);
+            authKey = jsonGet(rdbSettings, "auth_key", "");
+            Map<String, ? extends Map<String, ? extends Map<String, Object>>> tables = jsonGet(
+                    rdbSettings, "databases", new HashMap<>());
 
-        // Create thy changeinfos to hold the configuration
-        changeinfos = new ChangeInfos(tables);
-        threads = new ArrayList();
-        closed = false;
+            // Create thy changeRecords to hold the configuration
+            changeRecords = new ChangeRecords(tables);
+            logger.info("ChangeRecords: {}", changeRecords);
+            threads = new ArrayList();
+            closed = false;
+        }catch(Exception e){
+            logger.error("Initializing the RethinkDB River failed. " +
+                    " Is your configuration in the right format?" + e.getMessage());
+            throw e;
+        }
     }
 
     @Override
     public void start() {
         // Start up all the listening threads
         logger.info("Starting up RethinkDB River for {}:{}", hostname, port);
-        for(ChangeInfo changeinfo : changeinfos.getAll()) {
+        for(ChangeInfo changeinfo : changeRecords.getAll()) {
             Thread thread = EsExecutors
                     .daemonThreadFactory(settings.globalSettings(), "rethinkdb_river")
                     .newThread(new FeedWorker(changeinfo));
@@ -107,14 +130,16 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
         private ChangeInfo changeinfo;
         private RethinkDBConnection connection;
         private Cursor<Map<String,Object>> cursor;
+        private String primaryKey;
 
         public FeedWorker(ChangeInfo changeinfo){
             this.changeinfo = changeinfo;
         }
 
-        private void connect(){
-            connection = r.connect(hostname, port, authKey);
-            connection.use(changeinfo.db);
+        private RethinkDBConnection connect(){
+            RethinkDBConnection conn = r.connect(hostname, port, authKey);
+            conn.use(changeinfo.db);
+            return conn;
         }
 
         private void close(){
@@ -129,14 +154,18 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
         @Override
         public void run() {
             try {
-                connect();
+                connection = connect();
+                primaryKey = getPrimaryKey();
                 while (!closed) {
                     try {
                         cursor = changeinfo.query.runForCursor(connection);
                         while (cursor.hasNext()) {
                             Map<String, Object> change = cursor.next();
-                            logger.info("Inserting: {}", change);
-                            client.prepareIndex(changeinfo.db, changeinfo.table, (String) change.get("id"))
+                            logger.info("Inserting: {}", change); //TODO: deleteme
+                            client.prepareIndex(
+                                    changeinfo.targetIndex,
+                                    changeinfo.targetType,
+                                    (String) change.get(primaryKey))
                                     .setSource(change)
                                     .execute();
                         }
@@ -157,6 +186,11 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
                 logger.info("FeedWorker thread for {}.{} shutting down", changeinfo.db, changeinfo.table);
                 close();
             }
+        }
+
+        private String getPrimaryKey() {
+            Map<String, Object> tableInfo = (Map) r.db(changeinfo.db).table(changeinfo.table).info().run(connection);
+            return (String) tableInfo.get("primary_key");
         }
 
         private boolean isRecoverableError(RethinkDBException exc){
@@ -194,34 +228,42 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
         public final RqlQuery query;
         public final String table;
         public final String db;
+        public final boolean backfill;
+        public final String targetIndex;
+        public final String targetType;
 
-        public ChangeInfo(String db,String table){
+        public ChangeInfo(String db, String table, Map<String,Object> options){
             this.db = db;
             this.table = table;
+            this.backfill = (boolean) options.getOrDefault("backfill", false);
+            this.targetIndex = (String) options.getOrDefault("index", db);
+            this.targetType = (String) options.getOrDefault("type", table);
             query = r.table(table).changes().field("new_val");
         }
 
         @Override
         public String toString(){
-            return "ChangeInfo(" + db + "," + table + "," + query.toString() + ")";
+            return "ChangeRecord(" + db + "," + table + "," +
+                    (backfill ? "backfill,": "no backfill,") +
+                    (!targetIndex.equals(db) ? "index=" + targetIndex + ",": "") +
+                    (!targetType.equals(table) ? "type=" + targetType : "");
         }
     }
 
-    public class ChangeInfos implements Iterable {
+    public class ChangeRecords implements Iterable {
 
         public int totalSize;
         private HashMap<String, HashMap<String, ChangeInfo>> hash;
 
-        public ChangeInfos(Map<String,? extends List<String>> dbs){
-            super();
+        public ChangeRecords(Map<String, ? extends Map<String, ? extends Map<String, Object>>> dbs){
             totalSize = 0;
             hash = new HashMap<>();
-            for(String db: dbs.keySet()){
-                for(String table: dbs.get(db)){
-                    if (!hash.containsKey(db)){
-                        hash.put(db, new HashMap<>());
+            for(String dbName: dbs.keySet()){
+                for(String tableName: dbs.get(dbName).keySet()){
+                    if (!hash.containsKey(dbName)){
+                        hash.put(dbName, new HashMap<>());
                     }
-                    hash.get(db).put(table, new ChangeInfo(db, table));
+                    hash.get(dbName).put(tableName, new ChangeInfo(dbName, tableName, dbs.get(dbName).get(tableName)));
                     totalSize++;
                 }
             }
@@ -233,7 +275,7 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
 
         @Override
         public String toString(){
-            return "ChangeInfos(" + hash.toString() + ")";
+            return "ChangeRecords(" + hash.toString() + ")";
         }
 
         @Override
