@@ -22,7 +22,9 @@ package org.elasticsearch.river.rethinkdb;
 import com.rethinkdb.Cursor;
 import com.rethinkdb.RethinkDB;
 import com.rethinkdb.RethinkDBConnection;
+import com.rethinkdb.RethinkDBException;
 import com.rethinkdb.ast.query.RqlQuery;
+import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
@@ -30,6 +32,7 @@ import org.elasticsearch.river.AbstractRiverComponent;
 import org.elasticsearch.river.River;
 import org.elasticsearch.river.RiverName;
 import org.elasticsearch.river.RiverSettings;
+import org.elasticsearch.common.xcontent.XContentFactory.*;
 
 import java.util.*;
 
@@ -60,8 +63,7 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
 
         // Get ye settings from the document:
         Map<String, Object> rdbSettings = jsonGet(
-                settings.settings(), "rethinkdb", new HashMap<String, Object>());
-
+                settings.settings(), "rethinkdb", new HashMap<>());
         hostname = jsonGet(rdbSettings, "host", "localhost");
         port = jsonGet(rdbSettings, "port", 28015);
         authKey = jsonGet(rdbSettings, "auth_key", "");
@@ -109,14 +111,76 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
         public FeedWorker(ChangeInfo changeinfo){
             this.changeinfo = changeinfo;
         }
-        @Override
-        public void run() {
+
+        private void connect(){
             connection = r.connect(hostname, port, authKey);
             connection.use(changeinfo.db);
-            cursor = changeinfo.query.runForCursor(connection);
-            while(cursor.hasNext()){
-                Map<String,Object> change = cursor.next();
-                System.out.println(change); // TODO: actually insert this into ES
+        }
+
+        private void close(){
+            if (cursor != null){
+                cursor.close();
+            }
+            if (connection != null){
+                connection.close();
+            }
+        }
+
+        @Override
+        public void run() {
+            try {
+                connect();
+                while (!closed) {
+                    try {
+                        cursor = changeinfo.query.runForCursor(connection);
+                        while (cursor.hasNext()) {
+                            Map<String, Object> change = cursor.next();
+                            logger.info("Inserting: {}", change);
+                            client.prepareIndex(changeinfo.db, changeinfo.table, (String) change.get("id"))
+                                    .setSource(change)
+                                    .execute();
+                        }
+                    } catch (RethinkDBException e) {
+                        logger.error(e.getMessage());
+                        if(isRecoverableError(e)){
+                            logger.info("I think this is recoverable. Hang on a second...");
+                            reconnect();
+                        } else {
+                            logger.info("This probably isn't recoverable, bailing.");
+                            throw e;
+                        }
+                    }
+                }
+            } catch (Exception e){
+                logger.error("FeedWorker for {}.{} failed due to exception", e, changeinfo.db, changeinfo.table);
+            } finally {
+                logger.info("FeedWorker thread for {}.{} shutting down", changeinfo.db, changeinfo.table);
+                close();
+            }
+        }
+
+        private boolean isRecoverableError(RethinkDBException exc){
+            String msg = exc.getMessage();
+            return msg.matches(".*?Master for shard \\[.*\\) not available.*") // happens immediately after the db starts up, temporary
+                    || msg.matches(".*?Error receiving data.*") // happens when the database shuts down while we're waiting
+                    || msg.matches(".*?Query interrupted.*")    // happens when a query is killed? maybe.
+                    ;
+        }
+
+        private void reconnect() throws InterruptedException {
+            Thread.sleep(250);
+            logger.info("Attempting to reconnect to {}:{}", hostname, port);
+            for(int i = 500;; i = Math.min(i*2, 30000)){
+                try {
+                    connect();
+                }catch(RethinkDBException e){
+                    logger.error("Reconnect failed, waiting {}ms before trying again", i);
+                    Thread.sleep(i);
+                    continue;
+                }
+                logger.info("Reconnection successful.");
+                //Thread.sleep(500);
+                break;
             }
         }
     }
@@ -131,39 +195,55 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
         public final String table;
         public final String db;
 
-        private RethinkDBConnection connection;
-        private Cursor<Map<String,Object>> cursor;
-
         public ChangeInfo(String db,String table){
             this.db = db;
             this.table = table;
-            query = r.table(table).changes();
+            query = r.table(table).changes().field("new_val");
+        }
+
+        @Override
+        public String toString(){
+            return "ChangeInfo(" + db + "," + table + "," + query.toString() + ")";
         }
     }
 
-    public class ChangeInfos extends HashMap<String, HashMap<String, ChangeInfo>> {
+    public class ChangeInfos implements Iterable {
 
         public int totalSize;
+        private HashMap<String, HashMap<String, ChangeInfo>> hash;
 
         public ChangeInfos(Map<String,? extends List<String>> dbs){
             super();
             totalSize = 0;
+            hash = new HashMap<>();
             for(String db: dbs.keySet()){
                 for(String table: dbs.get(db)){
-                    this.getOrDefault(db, new HashMap<String, ChangeInfo>())
-                            .put(table, new ChangeInfo(db, table));
+                    if (!hash.containsKey(db)){
+                        hash.put(db, new HashMap<>());
+                    }
+                    hash.get(db).put(table, new ChangeInfo(db, table));
                     totalSize++;
                 }
             }
         }
 
         public ChangeInfo get(String db, String table){
-            return get(db).get(table);
+            return hash.get(db).get(table);
+        }
+
+        @Override
+        public String toString(){
+            return "ChangeInfos(" + hash.toString() + ")";
+        }
+
+        @Override
+        public Iterator<ChangeInfo> iterator(){
+            return getAll().iterator();
         }
 
         public List<ChangeInfo> getAll(){
-            ArrayList<ChangeInfo> ret = new ArrayList<ChangeInfo>(totalSize);
-            for(HashMap tables: values()){
+            ArrayList<ChangeInfo> ret = new ArrayList<>(totalSize);
+            for(HashMap tables: hash.values()){
                 ret.addAll(tables.values());
             }
             return ret;

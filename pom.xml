@@ -161,30 +161,30 @@
                     </execution>
                 </executions>
             </plugin>
-            <!--<plugin>-->
-                <!--<groupId>com.google.protobuf.tools</groupId>-->
-                <!--<artifactId>maven-protoc-plugin</artifactId>-->
-                <!--<version>0.3.2</version>-->
-                <!--<configuration>-->
-                    <!--<checkStaleness>true</checkStaleness>-->
-                    <!--<protocExecutable>${protoc.file}</protocExecutable>-->
-                <!--</configuration>-->
-                <!--<executions>-->
-                    <!--<execution>-->
-                        <!--<goals>-->
-                            <!--<goal>compile</goal>-->
-                            <!--<goal>testCompile</goal>-->
-                        <!--</goals>-->
-                    <!--</execution>-->
-                <!--</executions>-->
-            <!--</plugin>-->
+            <plugin>
+                <groupId>com.google.protobuf.tools</groupId>
+                <artifactId>maven-protoc-plugin</artifactId>
+                <version>0.3.2</version>
+                <configuration>
+                    <checkStaleness>true</checkStaleness>
+                    <protocExecutable>${protoc.file}</protocExecutable>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compile</goal>
+                            <goal>testCompile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>2.3.2</version>
                 <configuration>
-                    <source>1.6</source>
-                    <target>1.6</target>
+                    <source>1.8</source>
+                    <target>1.8</target>
                 </configuration>
             </plugin>
             <plugin>
