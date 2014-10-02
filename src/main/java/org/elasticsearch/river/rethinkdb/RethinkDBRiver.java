@@ -24,15 +24,20 @@ import com.rethinkdb.RethinkDB;
 import com.rethinkdb.RethinkDBConnection;
 import com.rethinkdb.RethinkDBException;
 import com.rethinkdb.ast.query.RqlQuery;
+import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
+import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.river.AbstractRiverComponent;
 import org.elasticsearch.river.River;
 import org.elasticsearch.river.RiverName;
 import org.elasticsearch.river.RiverSettings;
 
+import java.io.IOException;
 import java.util.*;
+
+import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 
 /**
  *
@@ -102,12 +107,12 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
     public void start() {
         // Start up all the listening threads
         logger.info("Starting up RethinkDB River for {}:{}", hostname, port);
-        for(ChangeInfo changeinfo : changeRecords.getAll()) {
+        for(ChangeRecord changeRecord : changeRecords.getAll()) {
             Thread thread = EsExecutors
                     .daemonThreadFactory(settings.globalSettings(), "rethinkdb_river")
-                    .newThread(new FeedWorker(changeinfo));
+                    .newThread(new FeedWorker(changeRecord));
             thread.start();
-            logger.info("Starting feed watcher for {}.{}", changeinfo.db, changeinfo.table);
+            logger.info("Starting feed watcher for {}.{}", changeRecord.db, changeRecord.table);
             threads.add(thread);
         }
     }
@@ -127,18 +132,20 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
 
     private class FeedWorker implements Runnable {
 
-        private ChangeInfo changeinfo;
+        private ChangeRecord changeRecord;
         private RethinkDBConnection connection;
         private Cursor<Map<String,Object>> cursor;
         private String primaryKey;
+        private boolean backfillRequired;
 
-        public FeedWorker(ChangeInfo changeinfo){
-            this.changeinfo = changeinfo;
+        public FeedWorker(ChangeRecord changeRecord){
+            this.changeRecord = changeRecord;
+            this.backfillRequired = changeRecord.backfill;
         }
 
         private RethinkDBConnection connect(){
             RethinkDBConnection conn = r.connect(hostname, port, authKey);
-            conn.use(changeinfo.db);
+            conn.use(changeRecord.db);
             return conn;
         }
 
@@ -158,13 +165,16 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
                 primaryKey = getPrimaryKey();
                 while (!closed) {
                     try {
-                        cursor = changeinfo.query.runForCursor(connection);
+                        cursor = changeRecord.query.runForCursor(connection);
+                        if(backfillRequired){
+                            backfill();
+                        }
                         while (cursor.hasNext()) {
                             Map<String, Object> change = cursor.next();
                             logger.info("Inserting: {}", change); //TODO: deleteme
                             client.prepareIndex(
-                                    changeinfo.targetIndex,
-                                    changeinfo.targetType,
+                                    changeRecord.targetIndex,
+                                    changeRecord.targetType,
                                     (String) change.get(primaryKey))
                                     .setSource(change)
                                     .execute();
@@ -181,15 +191,68 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
                     }
                 }
             } catch (Exception e){
-                logger.error("FeedWorker for {}.{} failed due to exception", e, changeinfo.db, changeinfo.table);
+                logger.error("FeedWorker for {}.{} failed due to exception", e, changeRecord.db, changeRecord.table);
             } finally {
-                logger.info("FeedWorker thread for {}.{} shutting down", changeinfo.db, changeinfo.table);
+                logger.info("FeedWorker thread for {}.{} shutting down", changeRecord.db, changeRecord.table);
                 close();
             }
         }
 
+        private void backfill() throws IOException {
+            RethinkDBConnection backfillConnection = r.connect(hostname, port, authKey);
+            backfillConnection.use(changeRecord.db);
+            try {
+                logger.info("Beginning backfill of documents from {}.{}", changeRecord.db, changeRecord.table);
+                // totalSize is purely for the purposes of printing progress, and may be inaccurate since documents can be
+                // inserted while we're backfilling
+                int totalSize = r.table(changeRecord.table).count().run(backfillConnection).intValue();
+                int tenthile = (totalSize + 9) / 10; // ceiling integer division by 10
+                BulkRequestBuilder bulkRequest = client.prepareBulk();
+                int i = 1;
+                for (Map<String, Object> doc : r.table(changeRecord.table).run(backfillConnection)) {
+                    if (i % tenthile == 0) {
+                        logger.info("{}.{} backfill {}% complete ({} documents)",
+                                changeRecord.db, changeRecord.table, (i / tenthile) * 10, i);
+                    }
+                    if (i % 100 == 0) {
+                        bulkRequest.execute();
+                        bulkRequest = client.prepareBulk();
+                    }
+                    bulkRequest.add(client.prepareIndex(
+                                    changeRecord.targetIndex,
+                                    changeRecord.targetType,
+                                    (String) doc.get(primaryKey))
+                                    .setSource(doc)
+                    );
+                    i += 1;
+                }
+                bulkRequest.execute();
+                logger.info("{}.{} Backfilled {} items. Turning off backfill", changeRecord.db, changeRecord.table, i);
+                backfillRequired = false;
+                XContentBuilder builder = jsonBuilder()
+                        .startObject()
+                        .startObject("rethinkdb")
+                        .startObject("databases")
+                        .startObject(changeRecord.db)
+                        .startObject(changeRecord.table)
+                        .field("backfill", backfillRequired)
+                        .endObject()
+                        .endObject()
+                        .endObject()
+                        .endObject()
+                        .endObject();
+                client.prepareUpdate("_river", riverName.name(), "_meta")
+                        .setRetryOnConflict(changeRecords.totalSize + 1) // only other backfilling threads should conflict
+                        .setDoc(builder)
+                        .execute();
+                backfillConnection.close();
+            } finally {
+                backfillConnection.close();
+            }
+        }
+
         private String getPrimaryKey() {
-            Map<String, Object> tableInfo = (Map) r.db(changeinfo.db).table(changeinfo.table).info().run(connection);
+            Map<String, Object> tableInfo = (Map) r.db(changeRecord.db).table(changeRecord.table).info().run(connection);
             return (String) tableInfo.get("primary_key");
         }
 
@@ -224,7 +287,7 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
         return map.containsKey(key) ? (V) map.get(key) : defaultValue;
     }
 
-    public class ChangeInfo {
+    public class ChangeRecord {
         public final RqlQuery query;
         public final String table;
         public final String db;
@@ -232,7 +295,7 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
         public final String targetIndex;
         public final String targetType;
 
-        public ChangeInfo(String db, String table, Map<String,Object> options){
+        public ChangeRecord(String db, String table, Map<String, Object> options){
             this.db = db;
             this.table = table;
             this.backfill = (boolean) options.getOrDefault("backfill", false);
@@ -253,7 +316,7 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
     public class ChangeRecords implements Iterable {
 
         public int totalSize;
-        private HashMap<String, HashMap<String, ChangeInfo>> hash;
+        private HashMap<String, HashMap<String, ChangeRecord>> hash;
 
         public ChangeRecords(Map<String, ? extends Map<String, ? extends Map<String, Object>>> dbs){
             totalSize = 0;
@@ -263,13 +326,13 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
                     if (!hash.containsKey(dbName)){
                         hash.put(dbName, new HashMap<>());
                     }
-                    hash.get(dbName).put(tableName, new ChangeInfo(dbName, tableName, dbs.get(dbName).get(tableName)));
+                    hash.get(dbName).put(tableName, new ChangeRecord(dbName, tableName, dbs.get(dbName).get(tableName)));
                     totalSize++;
                 }
             }
         }
 
-        public ChangeInfo get(String db, String table){
+        public ChangeRecord get(String db, String table){
             return hash.get(db).get(table);
         }
 
@@ -279,12 +342,12 @@ public class RethinkDBRiver extends AbstractRiverComponent implements River {
         }
 
         @Override
-        public Iterator<ChangeInfo> iterator(){
+        public Iterator<ChangeRecord> iterator(){
             return getAll().iterator();
         }
 
-        public List<ChangeInfo> getAll(){
-            ArrayList<ChangeInfo> ret = new ArrayList<>(totalSize);
+        public List<ChangeRecord> getAll(){
+            ArrayList<ChangeRecord> ret = new ArrayList<>(totalSize);
             for(HashMap tables: hash.values()){
                 ret.addAll(tables.values());
             }
