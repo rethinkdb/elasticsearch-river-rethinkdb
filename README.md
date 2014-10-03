@@ -1,7 +1,15 @@
 # Elasticsearch RethinkDB River
 
-This is a plugin for Elasticsearch that pulls in documents from RethinkDB, then indexes new/updated/deleted documents in real time.
-Elasticsearch gives you the ability to do full-text search.
+This is a plugin for [Elasticsearch][] that pulls in documents from [RethinkDB][], then indexes new/updated/deleted documents in real time.
+Elasticsearch gives you the ability to do [full-text search][].
+
+You might want this if you'd like to be able to search RethinkDB documents using queries like:
+  - get all documents that contain the phrase X
+  - retrieve the first 10 docs that roughly match the phrase X, ignoring common words like "the" and "a"
+
+[Elasticsearch]: http://www.elasticsearch.org
+[RethinkDB]: http://rethinkdb.com
+[full-text search]: http://en.wikipedia.org/wiki/Full_text_search
 
 ## Installation
 
@@ -48,13 +56,13 @@ You may want to brush up on [how to query Elasticsearch][].
 Rivers are a kind of plugin for Elasticsearch (ES) that sync external data sources with Elasticsearch's indexes.
 ES indexes are similar to RethinkDB's databases, and ES types are similar to RethinkDB's tables.
 Every index can have zero or more types, and every type can have zero or more documents.
-To configure the river, you create a document in the `_river` index, which is a magical index ES treats differently.
+To configure the river, you create a document in the `_river` index, which is a magical index ES watches for configuration info.
 
 ```bash
 $ curl -XPUT localhost:9200/_river/rethinkdb/_meta
 ```
 
-The new document has a type called `rethinkdb` and the id `_meta`.
+This creates a new document in the `rethinkdb` type with the id `_meta`.
 At a minimum, the `_meta` document needs a key with the `type` field set to `"rethinkdb"`.
 You'll also want to put a `rethinkdb` key with a document that contains these keys:
 
@@ -73,7 +81,7 @@ You can specify as many databases and tables to watch as you'd like.
 Here's a larger example that indexes `blog.posts` and `blog.comments` with the defaults plugged in:
 
 ```javascript
-# localhost:9200/_river/rethinkdb/_meta
+// localhost:9200/_river/rethinkdb/_meta
 {
   "host": "localhost",
   "port": 28015,
@@ -97,6 +105,56 @@ Here's a larger example that indexes `blog.posts` and `blog.comments` with the d
 
 After the river backfills documents for a given table, it will change the backfill setting to `false`.
 This way, the next time the Elasticsearch server restarts, it won't trigger a full backfill.
+
+## OK, I've queried Elasticsearch, what do I do now?
+
+The documents are stored in Elasticsearch with the same id as the RethinkDB document id, so you can easily retrieve the original document:
+
+For example, if you query your lorem ipsum blog posts for any that have the word 'cupiditate' in the body (and who wouldn't want to do that?):
+
+```
+$ curl localhost:9200/blog/posts/_search?q=body:cupiditate
+```
+
+You'll get results that look like:
+
+```javascript
+{
+    "_shards": {
+        "failed": 0,
+        "successful": 5,
+        "total": 5
+    },
+    "hits": {
+        "hits": [
+            {
+                "_id": "261f4990-627b-4844-96ed-08b182121c5e",
+                "_index": "blog",
+                "_score": 1.0,
+                "_source": {
+                    "body": "cupiditate quo est a modi nesciunt soluta\nipsa voluptas",
+                    "id": "261f4990-627b-4844-96ed-08b182121c5e",
+                    "title": "at nam consequatur ea labore ea harum",
+                    "userId": 10.0
+                },
+                "_type": "posts"
+            }
+        ],
+        "max_score": 1.0,
+        "total": 1
+    },
+    "timed_out": false,
+    "took": 6
+}
+```
+
+Now, you can fetch the original document from RethinkDB using:
+
+```python
+r.db('blog').table('posts').get('261f4990-627b-4844-96ed-08b182121c5e').run(conn)
+```
+
+
 
 ## Caveats
 
