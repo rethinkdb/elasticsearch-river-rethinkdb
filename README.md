@@ -13,8 +13,9 @@ Once that's in place, you can install the plugin with:
 [Java 8]: http://www.oracle.com/technetwork/java/javase/downloads/index.html
 
 ```
-elasticsearch-plugin --install river-rethinkdb --url https://github.com/rethinkdb/elasticsearch-river-rethinkdb/releases/download/1.0.0/elasticsearch-river-rethinkdb-1.0.0.zip
+elasticsearch-plugin --install river-rethinkdb --url http://goo.gl/UkBm47
 ```
+
 
 __Note__: Depending on how you've installed Elasticsearch, you may need to become the elasticsearch user to install the plugin.
 
