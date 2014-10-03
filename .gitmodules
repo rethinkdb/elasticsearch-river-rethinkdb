@@ -1,3 +1,3 @@
 [submodule "rethink-java-driver"]
 	path = rethink-java-driver
-	url = git@github.com:deontologician/rethink-java-driver
+	url = git@github.com:npiv/rethink-java-driver
