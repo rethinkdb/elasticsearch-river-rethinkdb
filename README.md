@@ -25,7 +25,7 @@ If you want to index the table `posts` in the database `blog`, this is all you n
 ```bash
 $ curl -XPUT localhost:9200/_river/rethinkdb/_meta -d '{
    "type":"rethinkdb",
-   "rethinkdb": {"databases": {"test": {"users": {"backfill": true}}}},
+   "rethinkdb": {"databases": {"blog": {"posts": {"backfill": true}}}},
    "host": "localhost",
    "port": 28015
    }'
