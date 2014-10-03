@@ -108,9 +108,9 @@ This way, the next time the Elasticsearch server restarts, it won't re-pull all 
 
 ## OK, I've queried Elasticsearch, what do I do now?
 
-The documents are stored in Elasticsearch with the same id as the RethinkDB document id, so you can easily retrieve the original document:
+The documents are stored in Elasticsearch with the same id as the RethinkDB uses for it, so you can easily retrieve the original document.
 
-For example, if you query your lorem ipsum blog posts for any that have the word 'cupiditate' in the body (and who wouldn't want to do that?):
+For example, if you query your lorem ipsum blog posts for any that have the word "cupiditate" in the body:
 
 ```
 $ curl localhost:9200/blog/posts/_search?q=body:cupiditate
@@ -122,8 +122,8 @@ You'll get results that look like:
 {
     "_shards": {
         "failed": 0,
-        "successful": 5,
-        "total": 5
+        "successful": 1,
+        "total": 1
     },
     "hits": {
         "hits": [
