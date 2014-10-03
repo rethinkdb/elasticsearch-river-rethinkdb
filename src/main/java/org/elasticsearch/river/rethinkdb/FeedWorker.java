@@ -65,23 +65,18 @@ class FeedWorker implements Runnable {
             primaryKey = getPrimaryKey();
             while (!river.closed) {
                 try {
-                    cursor = changeRecord.query.runForCursor(connection);
+                    cursor = r.table(changeRecord.table).changes().runForCursor(connection);
                     if (backfillRequired) {
                         backfill();
                     }
                     int counter = 0;
                     while (cursor.hasNext()) {
                         Map<String, Object> change = cursor.next();
+                        updateES(change);
                         counter++;
-                        if(counter % 10 == 1){
+                        if(counter % 10 == 0){
                             logger.info("Synced {} documents", counter);
                         }
-                        client.prepareIndex(
-                                changeRecord.targetIndex,
-                                changeRecord.targetType,
-                                (String) change.get(primaryKey))
-                                .setSource(change)
-                                .execute();
                     }
                 } catch (RethinkDBException e) {
                     logger.error("Worker has a problem: " + e.getMessage());
@@ -106,6 +101,27 @@ class FeedWorker implements Runnable {
         }
     }
 
+    private boolean updateES(Map<String, Object> change) {
+        Map<String, Object> newVal = (Map) change.get("new_val");
+        Map<String, Object> oldVal = (Map) change.get("old_val");
+        if(newVal != null) {
+            client.prepareIndex(
+                    changeRecord.targetIndex,
+                    changeRecord.targetType,
+                    (String) newVal.get(primaryKey))
+                    .setSource(newVal)
+                    .execute();
+            return false;
+        }else{
+            client.prepareDelete(
+                    changeRecord.targetIndex,
+                    changeRecord.targetType,
+                    (String) oldVal.get(primaryKey))
+                    .execute();
+            return true;
+        }
+    }
+
     private void backfill() throws IOException {
         RethinkDBConnection backfillConnection = r.connect(river.hostname, river.port, river.authKey);
         backfillConnection.use(changeRecord.db);
@@ -114,12 +130,16 @@ class FeedWorker implements Runnable {
             // totalSize is purely for the purposes of printing progress, and may be inaccurate since documents can be
             // inserted while we're backfilling
             int totalSize = r.table(changeRecord.table).count().run(backfillConnection).intValue();
-            int tenthile = (totalSize + 9) / 10; // ceiling integer division by 10
             BulkRequestBuilder bulkRequest = client.prepareBulk();
-            int i = 1;
-            for (Map<String, Object> doc : r.table(changeRecord.table).run(backfillConnection)) {
-                if (i % tenthile == 0) {
-                    logger.info("backfill {}% complete ({} documents)", (i / tenthile) * 10, i);
+            int i = 0;
+            int oldTenthile = 0, newTenthile;
+            Cursor cursor = r.table(changeRecord.table).runForCursor(backfillConnection);
+            while (cursor.hasNext()){
+                Map<String, Object> doc = (Map<String, Object>) cursor.next();
+                newTenthile = (i * 100) / totalSize / 10;
+                if (newTenthile != oldTenthile) {
+                    logger.info("backfill {}0% complete ({} documents)", newTenthile, i);
+                    oldTenthile = newTenthile;
                 }
                 if (i % 100 == 0) {
                     bulkRequest.execute();

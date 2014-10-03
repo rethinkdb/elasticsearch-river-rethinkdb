@@ -7,8 +7,6 @@ import java.util.Map;
 
 
 public class ChangeRecord {
-    private final RethinkDB r = RethinkDB.r;
-    public final RqlQuery query;
     public final String table;
     public final String db;
     public final boolean backfill;
@@ -21,7 +19,6 @@ public class ChangeRecord {
         this.backfill = (boolean) options.getOrDefault("backfill", false);
         this.targetIndex = (String) options.getOrDefault("index", db);
         this.targetType = (String) options.getOrDefault("type", table);
-        query = r.table(table).changes().field("new_val");
     }
 
     @Override

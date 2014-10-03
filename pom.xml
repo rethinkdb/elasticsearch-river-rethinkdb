@@ -5,10 +5,10 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>org.elasticsearch</groupId>
     <artifactId>elasticsearch-river-rethinkdb</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.0</version>
     <packaging>jar</packaging>
     <name>Elasticsearch RethinkDB River plugin</name>
-    <description>A River for pulling indexing RethinkDB databases</description>
+    <description>A River for indexing RethinkDB databases and staying synced</description>
     <url>https://github.com/rethinkdb/elasticsearch-river-rethinkdb/</url>
     <inceptionYear>2014</inceptionYear>
     <licenses>
