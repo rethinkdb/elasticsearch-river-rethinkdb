@@ -103,8 +103,8 @@ Here's a larger example that indexes `blog.posts` and `blog.comments` with the d
 }
 ```
 
-After the river backfills documents for a given table, it will change the backfill setting to `false`.
-This way, the next time the Elasticsearch server restarts, it won't trigger a full backfill.
+After the river backfills documents for a given table, it will change the `backfill` setting to `false`.
+This way, the next time the Elasticsearch server restarts, it won't re-pull all document from RethinkDB again.
 
 ## OK, I've queried Elasticsearch, what do I do now?
 
