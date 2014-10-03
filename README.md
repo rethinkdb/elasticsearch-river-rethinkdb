@@ -42,7 +42,7 @@ Elasticsearch's default port is 9200.
 RethinkDB's default port is 28015.
 You may want to brush up on [how to query Elasticsearch][].
 
-[how to query Elasticsearch]: http://
+[how to query Elasticsearch]: http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-search.html
 
 ## Details
 
