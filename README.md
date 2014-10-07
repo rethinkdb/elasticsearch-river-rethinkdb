@@ -33,10 +33,11 @@ If you want to index the table `posts` in the database `blog`, this is all you n
 ```bash
 $ curl -XPUT localhost:9200/_river/rethinkdb/_meta -d '{
    "type":"rethinkdb",
-   "rethinkdb": {"databases": {"blog": {"posts": {"backfill": true}}}},
-   "host": "localhost",
-   "port": 28015
-   }'
+   "rethinkdb": {
+     "databases": {"blog": {"posts": {"backfill": true}}},
+     "host": "localhost",
+     "port": 28015
+   }}'
 ```
 
 Now you'll have a new index called `blog` and a type called `posts` which you can query:
@@ -83,20 +84,23 @@ Here's a larger example that indexes `blog.posts` and `blog.comments` with the d
 ```javascript
 // localhost:9200/_river/rethinkdb/_meta
 {
-  "host": "localhost",
-  "port": 28015,
-  "auth_key": "",
-  "databases": {
-    "blog": {
-      "posts": {
-        "backfill": true,
-        "index": "blog",
-        "type": "posts",
-      },
-      "comments": {
-        "backfill": true,
-        "index": "blog",
-        "type": "comments",
+  "type": "rethinkdb",
+  "rethinkdb": {
+    "host": "localhost",
+    "port": 28015,
+    "auth_key": "",
+    "databases": {
+      "blog": {
+        "posts": {
+          "backfill": true,
+          "index": "blog",
+          "type": "posts",
+        },
+        "comments": {
+          "backfill": true,
+          "index": "blog",
+          "type": "comments",
+        }
       }
     }
   }
