@@ -108,7 +108,7 @@ class FeedWorker implements Runnable {
             client.prepareIndex(
                     changeRecord.targetIndex,
                     changeRecord.targetType,
-                    (String) newVal.get(primaryKey))
+                    newVal.get(primaryKey).toString())
                     .setSource(newVal)
                     .execute();
             return false;
@@ -116,7 +116,7 @@ class FeedWorker implements Runnable {
             client.prepareDelete(
                     changeRecord.targetIndex,
                     changeRecord.targetType,
-                    (String) oldVal.get(primaryKey))
+                    oldVal.get(primaryKey).toString())
                     .execute();
             return true;
         }
@@ -148,7 +148,7 @@ class FeedWorker implements Runnable {
                 bulkRequest.add(client.prepareIndex(
                                 changeRecord.targetIndex,
                                 changeRecord.targetType,
-                                (String) doc.get(primaryKey))
+                                doc.get(primaryKey).toString())
                                 .setSource(doc)
                 );
                 i += 1;
@@ -181,7 +181,7 @@ class FeedWorker implements Runnable {
     @SuppressWarnings("unchecked")
     private String getPrimaryKey() {
         Map<String, Object> tableInfo = (Map) r.db(changeRecord.db).table(changeRecord.table).info().run(connection);
-        return (String) tableInfo.get("primary_key");
+        return tableInfo.get("primary_key").toString();
     }
 
     private boolean isRecoverableError(RethinkDBException exc){
