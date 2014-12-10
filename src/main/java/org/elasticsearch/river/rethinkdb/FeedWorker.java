@@ -5,6 +5,7 @@ import com.rethinkdb.RethinkDB;
 import com.rethinkdb.RethinkDBConnection;
 import com.rethinkdb.RethinkDBException;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
+import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.ESLoggerFactory;
@@ -141,8 +142,12 @@ class FeedWorker implements Runnable {
                     logger.info("backfill {}0% complete ({} documents)", newTenthile, i);
                     oldTenthile = newTenthile;
                 }
-                if (i % 100 == 0) {
-                    bulkRequest.execute();
+                if (i > 0 && i % 100 == 0) {
+                    BulkResponse response = bulkRequest.execute().actionGet();
+                    if (response.hasFailures()) {
+                        logger.error("Encountered errors backfilling");
+                        logger.error(response.buildFailureMessage());
+                    }
                     bulkRequest = client.prepareBulk();
                 }
                 bulkRequest.add(client.prepareIndex(
@@ -153,7 +158,9 @@ class FeedWorker implements Runnable {
                 );
                 i += 1;
             }
-            bulkRequest.execute();
+            if (i > 0) {
+                bulkRequest.execute();
+            }
             logger.info("Backfilled {} items. Turning off backfill in settings", i);
             backfillRequired = false;
             XContentBuilder builder = jsonBuilder()
