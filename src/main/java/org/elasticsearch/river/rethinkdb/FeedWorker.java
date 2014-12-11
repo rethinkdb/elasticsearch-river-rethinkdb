@@ -125,6 +125,22 @@ class FeedWorker implements Runnable {
         }
     }
 
+    private int synchronizeBulk(BulkRequestBuilder bulkRequest, HashSet<String> failureReasons) {
+        int failed = 0;
+        BulkResponse response = bulkRequest.get();
+        if (response.hasFailures()) {
+            logger.error("Encountered errors backfilling");
+            logger.error(response.buildFailureMessage());
+            for(BulkItemResponse ir : response.getItems()){
+                if (ir.isFailed()) {
+                    failed++;
+                    failureReasons.add(ir.getFailureMessage());
+                }
+            }
+        }
+        return failed;
+    }
+
     private void backfill() throws IOException {
         RethinkDBConnection backfillConnection = r.connect(river.hostname, river.port, river.authKey);
         backfillConnection.use(changeRecord.db);
@@ -135,7 +151,7 @@ class FeedWorker implements Runnable {
             int totalSize = r.table(changeRecord.table).count().run(backfillConnection).intValue();
             BulkRequestBuilder bulkRequest = client.prepareBulk();
             int attempted = 0, failed = 0;
-            HashSet<String> failureReasons = new HashSet<String>();
+            HashSet<String> failureReasons = new HashSet<>();
             int oldDecile = 0, newDecile;
             Cursor cursor = r.table(changeRecord.table).runForCursor(backfillConnection);
             while (cursor.hasNext()){
@@ -145,18 +161,8 @@ class FeedWorker implements Runnable {
                     logger.info("backfill {}0% complete ({} documents)", newDecile, attempted);
                     oldDecile = newDecile;
                 }
-                if (attempted > 0 && attempted % 100 == 0) {
-                    BulkResponse response = bulkRequest.execute().actionGet();
-                    if (response.hasFailures()) {
-                        logger.error("Encountered errors backfilling");
-                        logger.error(response.buildFailureMessage());
-                        for(BulkItemResponse ir : response.getItems()){
-                            if (ir.isFailed()) {
-                                failed++;
-                                failureReasons.add(ir.getFailureMessage());
-                            }
-                        }
-                    }
+                if (attempted > 0 && attempted % 1000 == 0) {
+                    failed += synchronizeBulk(bulkRequest, failureReasons);
                     bulkRequest = client.prepareBulk();
                 }
                 bulkRequest.add(client.prepareIndex(
@@ -167,8 +173,8 @@ class FeedWorker implements Runnable {
                 );
                 attempted += 1;
             }
-            if (attempted > 0) {
-                bulkRequest.execute();
+            if (bulkRequest.numberOfActions() > 0) {
+                failed += synchronizeBulk(bulkRequest, failureReasons);
             }
             if (failed > 0) {
                 logger.info("Attempted to backfill {} items, {} succeeded and {} failed.",
