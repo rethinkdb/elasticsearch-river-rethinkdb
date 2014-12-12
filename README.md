@@ -20,7 +20,7 @@ Once that's in place, you can install the plugin with:
 [Java 8]: http://www.oracle.com/technetwork/java/javase/downloads/index.html
 
 ```
-elasticsearch-plugin --install river-rethinkdb --url http://goo.gl/UkBm47
+elasticsearch-plugin --install river-rethinkdb --url http://goo.gl/JmMwTf
 ```
 
 
