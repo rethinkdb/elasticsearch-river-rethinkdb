@@ -16,7 +16,7 @@ You might want this if you'd like to be able to search RethinkDB documents using
 First off, you need [Elasticsearch 1.3 or 1.4][] running on [Java 8][] for this to work.
 Once that's in place, you can install the plugin with:
 
-[Elasticsearch 1.3]: http://www.elasticsearch.org/overview/elkdownloads/
+[Elasticsearch 1.3 or 1.4]: http://www.elasticsearch.org/overview/elkdownloads/
 [Java 8]: http://www.oracle.com/technetwork/java/javase/downloads/index.html
 
 ```
