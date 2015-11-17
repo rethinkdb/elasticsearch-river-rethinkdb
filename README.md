@@ -1,5 +1,7 @@
 # Elasticsearch RethinkDB River
 
+**Note** This river is deprecated and will no longer work with RethinkDB 2.2 and higher. It is recommended you use the [RethinkDB logstash input](https://github.com/rethinkdb/logstash-input-rethinkdb) instead.
+
 This is a plugin for [Elasticsearch][] that pulls in documents from [RethinkDB][], then indexes new/updated/deleted documents in real time.
 Elasticsearch gives you the ability to do [full-text search][].
 
